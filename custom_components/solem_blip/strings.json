@@ -9,12 +9,20 @@
     "error": {
       "cannot_connect": "Failed to connect",
       "cannot_connect_slots": "Bluetooth adapter or proxy has no free connection slots and the controller is not visible in discovery. Wait and retry, close other mobile apps using the controller, check Settings → Bluetooth → Connection monitor, or add a Bluetooth proxy closer to the controller.",
+      "invalid_mac": "Invalid MAC address. Use AA:BB:CC:DD:EE:FF, aa-bb-cc-dd-ee-ff or AABBCCDDEEFF.",
       "unknown": "Unexpected error"
     },
     "step": {
       "user": {
         "title": "Controller setup",
         "description": "Select your Solem BL-IP controller. The number of stations is read from the device during setup. Scheduling and rain skip belong in Home Assistant automations.",
+        "data": {
+          "controller_mac_address": "Controller MAC address"
+        }
+      },
+      "manual": {
+        "title": "Manual controller setup",
+        "description": "Type the MAC address printed on the controller (for example AA:BB:CC:DD:EE:FF). Use this when the controller is not listed: some controllers advertise without the Bluetooth service UUID that Home Assistant discovery looks for. The number of stations is read from the device during setup.",
         "data": {
           "controller_mac_address": "Controller MAC address"
         }
@@ -354,6 +362,22 @@
         "every_2_days": "Every 2 days (from start date)",
         "every_3_days": "Every 3 days (from start date)",
         "every_4_days": "Every 4 days (from start date)"
+      }
+    }
+  },
+  "services": {
+    "start_ble_maintenance": {
+      "name": "Start BLE maintenance",
+      "description": "Temporarily quiet expected BLE transport warnings during proxy maintenance. BLE health counters and repair alerts remain active, even during long windows.",
+      "fields": {
+        "device_id": {
+          "name": "Controller",
+          "description": "Solem BL-IP controller to protect during maintenance."
+        },
+        "duration": {
+          "name": "Duration",
+          "description": "Maximum grace period in seconds (1–600)."
+        }
       }
     }
   }

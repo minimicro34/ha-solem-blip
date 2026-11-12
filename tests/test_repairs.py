@@ -3,17 +3,125 @@
 from __future__ import annotations
 
 from collections import deque
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import issue_registry as ir
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.solem_blip.bluetooth_issue import (
+    ISSUE_BLUETOOTH_UNAVAILABLE,
     RECOVERY_CLEAR_SECONDS,
     WINDOW_FAILURE_THRESHOLD,
     WINDOW_SECONDS,
     note_ble_degradation,
     note_ble_recovery,
 )
+from custom_components.solem_blip.const import DOMAIN
+from custom_components.solem_blip.coordinator import SolemCoordinator
+
+
+def _raise_issue(
+    hass: HomeAssistant, entry_id: str, *, mac: str = "AA:BB:CC:DD:EE:FF"
+) -> str:
+    """Create the Bluetooth unavailable issue the way a previous session did."""
+    issue_id = f"{ISSUE_BLUETOOTH_UNAVAILABLE}_{entry_id}"
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        issue_id,
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key=ISSUE_BLUETOOTH_UNAVAILABLE,
+        translation_placeholders={"mac": mac},
+    )
+    return issue_id
+
+
+async def _build_coordinator(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_solem_client: MagicMock,
+) -> SolemCoordinator:
+    """Create a coordinator through setup, as production does."""
+    with patch(
+        "custom_components.solem_blip.client_factory.StatelessSolemClient",
+        return_value=mock_solem_client,
+    ), patch(
+        "custom_components.solem_blip.bluetooth.async_get_connectable_device",
+    ):
+        coordinator = SolemCoordinator(hass, config_entry)
+        await coordinator.async_init()
+    return coordinator
+
+
+@pytest.mark.asyncio
+async def test_setup_clears_leftover_issue(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_solem_client: MagicMock,
+) -> None:
+    """A dead record from a previous session is dropped, not adopted."""
+    issue_id = _raise_issue(hass, mock_config_entry.entry_id)
+    registry = ir.async_get(hass)
+    assert registry.async_get_issue(DOMAIN, issue_id) is not None
+
+    coordinator = await _build_coordinator(
+        hass, mock_config_entry, mock_solem_client
+    )
+
+    assert registry.async_get_issue(DOMAIN, issue_id) is None
+    # The flag stays clear, so a link that is still degraded can raise a fresh
+    # notice through the failure window.
+    assert coordinator._ble_issue_active is False
+
+
+@pytest.mark.asyncio
+async def test_setup_ignores_issue_of_another_entry(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_solem_client: MagicMock,
+) -> None:
+    """Only this entry's notice is dropped; other entries keep theirs."""
+    other_entry_id = "01OTHERSESSION00000000000000"
+    other_issue = _raise_issue(hass, other_entry_id)
+    registry = ir.async_get(hass)
+
+    coordinator = await _build_coordinator(
+        hass, mock_config_entry, mock_solem_client
+    )
+
+    assert coordinator._ble_issue_active is False
+    assert registry.async_get_issue(DOMAIN, other_issue) is not None
+
+
+@pytest.mark.asyncio
+async def test_degradation_after_setup_raises_an_active_issue(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_solem_client: MagicMock,
+) -> None:
+    """A cleared leftover must not hide a link that is still degraded.
+
+    Home Assistant only lists an issue while it is active, so this asserts the
+    notice raised after a restart is active again.
+    """
+    _raise_issue(hass, mock_config_entry.entry_id)
+    coordinator = await _build_coordinator(
+        hass, mock_config_entry, mock_solem_client
+    )
+    issue_id = f"{ISSUE_BLUETOOTH_UNAVAILABLE}_{mock_config_entry.entry_id}"
+
+    for attempt in range(WINDOW_FAILURE_THRESHOLD):
+        note_ble_degradation(
+            coordinator, source="status poll failed", now=attempt * 60.0
+        )
+
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+    assert issue is not None
+    assert issue.active is True
+    assert coordinator._ble_issue_active is True
 
 
 @pytest.mark.asyncio

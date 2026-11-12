@@ -91,6 +91,29 @@ def async_clear_bluetooth_unavailable_issue(coordinator: SolemCoordinator) -> No
     )
 
 
+def clear_stale_bluetooth_issue(coordinator: SolemCoordinator) -> None:
+    """Remove a Bluetooth unavailable notice left by a previous session.
+
+    Home Assistant loads a non-persistent issue as inactive, so a notice raised
+    before a restart is not listed any more; the record itself would stay in the
+    registry forever. Deleting it at setup keeps the registry honest without
+    hiding a live problem: the active flag stays False, so a link that is still
+    degraded raises a fresh, active notice once the failure window fills.
+    """
+    entry = coordinator.config_entry
+    if entry is None:
+        return
+    issue_id = f"{ISSUE_BLUETOOTH_UNAVAILABLE}_{entry.entry_id}"
+    if ir.async_get(coordinator.hass).async_get_issue(DOMAIN, issue_id) is None:
+        return
+    ir.async_delete_issue(coordinator.hass, DOMAIN, issue_id)
+    _LOGGER.debug(
+        "%s - Removed the Bluetooth unavailable repair issue left by a "
+        "previous session",
+        coordinator.controller_mac_address,
+    )
+
+
 def note_ble_degradation(
     coordinator: SolemCoordinator, *, source: str, now: float | None = None
 ) -> None:
